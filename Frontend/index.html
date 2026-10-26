@@ -1,0 +1,245 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SecureTech | Security Operations</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0b1120;
+      color: #e5e7eb;
+    }
+    header {
+      padding: 22px 30px;
+      background: #111a2e;
+      border-bottom: 1px solid #253149;
+    }
+    header h1 { margin: 0; font-size: 23px; }
+    header p { color: #9caec8; margin-bottom: 0; }
+    main { max-width: 1100px; margin: auto; padding: 25px; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 16px;
+    }
+    .card, .panel {
+      background: #111a2e;
+      border: 1px solid #253149;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 18px;
+    }
+    .muted { color: #9caec8; font-size: 13px; }
+    .number { font-size: 30px; font-weight: bold; margin-top: 12px; }
+    button {
+      border: 0; border-radius: 7px; padding: 11px 16px;
+      background: #60a5fa; color: #071426; font-weight: bold;
+      cursor: pointer; margin: 4px 5px 4px 0;
+    }
+    button.secondary { background: #26364f; color: #e5e7eb; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .status { color: #86efac; }
+    .error { color: #fca5a5; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td {
+      padding: 11px 8px; text-align: left;
+      border-bottom: 1px solid #253149; font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    th { color: #9caec8; }
+    .scroll { overflow-x: auto; }
+    @media (max-width: 600px) { main { padding: 14px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SecureTech <span style="color:#60a5fa">/</span> Security Center</h1>
+    <p>Cybersecurity Risk Assessment &amp; Auditing · Lab Environment</p>
+  </header>
+
+  <main>
+    <section class="cards">
+      <div class="card">
+        <div class="muted">API STATUS</div>
+        <div class="number" id="apiStatus">Checking…</div>
+      </div>
+      <div class="card">
+        <div class="muted">TOTAL FINDINGS</div>
+        <div class="number" id="total">—</div>
+      </div>
+      <div class="card">
+        <div class="muted">OPEN FINDINGS</div>
+        <div class="number" id="open">—</div>
+      </div>
+      <div class="card">
+        <div class="muted">DISCOVERED SERVICES</div>
+        <div class="number" id="services">—</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Assessment Controls</h2>
+      <p class="muted">Target: Ubuntu lab server · 192.168.26.10</p>
+      <button id="scanBtn" onclick="runScan()">Run Nmap Service Scan</button>
+      <button class="secondary" onclick="simulate()">Record Test Event</button>
+      <button class="secondary" onclick="refreshData()">Refresh Dashboard</button>
+      <p id="message" class="muted">Waiting for assessment.</p>
+      <p class="muted">
+        The test event is simulated. Nmap service discovery is not a full vulnerability scan.
+      </p>
+    </section>
+
+    <section class="panel">
+      <h2>Asset Inventory</h2>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Asset</th><th>IP Address</th><th>Type</th><th>Environment</th></tr></thead>
+          <tbody id="assets"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Open Findings &amp; Assessment Results</h2>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Asset</th><th>Finding</th><th>Severity</th><th>Status</th></tr></thead>
+          <tbody id="findings"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Discovered Open Ports</h2>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Port</th><th>Protocol</th><th>Service</th><th>Version</th></tr></thead>
+          <tbody id="ports"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+<script>
+  const API = "http://127.0.0.1:8000";
+  let scanResults = [];
+
+  function cell(value) {
+    const td = document.createElement("td");
+    td.textContent = value ?? "";
+    return td;
+  }
+
+  function addRow(tbody, values) {
+    const tr = document.createElement("tr");
+    values.forEach(value => tr.appendChild(cell(value)));
+    tbody.appendChild(tr);
+  }
+
+  async function getJSON(path) {
+    const response = await fetch(API + path);
+    if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+    return response.json();
+  }
+
+  async function refreshData() {
+    const message = document.getElementById("message");
+    try {
+      const [health, assets, summary, findings] = await Promise.all([
+        getJSON("/api/health"),
+        getJSON("/api/assets"),
+        getJSON("/api/summary"),
+        getJSON("/api/findings")
+      ]);
+
+      document.getElementById("apiStatus").textContent = health.status;
+      document.getElementById("total").textContent = summary.total_findings;
+      document.getElementById("open").textContent = summary.open_findings;
+
+      const assetBody = document.getElementById("assets");
+      assetBody.replaceChildren();
+      assets.assets.forEach(a =>
+        addRow(assetBody, [a.name, a.ip, a.type, a.environment])
+      );
+
+      const findingBody = document.getElementById("findings");
+      findingBody.replaceChildren();
+      findings.findings.forEach(f =>
+        addRow(findingBody, [f.asset, f.title, f.severity, f.status])
+      );
+
+      renderPorts();
+      message.textContent = "Dashboard data refreshed.";
+      message.className = "status";
+    } catch (error) {
+      document.getElementById("apiStatus").textContent = "Offline";
+      message.textContent = "Could not reach the backend. Is Uvicorn running? " + error.message;
+      message.className = "error";
+    }
+  }
+
+  function renderPorts() {
+    const body = document.getElementById("ports");
+    body.replaceChildren();
+    scanResults.forEach(p =>
+      addRow(body, [p.port, p.protocol, p.service, p.version])
+    );
+    document.getElementById("services").textContent = scanResults.length;
+  }
+
+  async function runScan() {
+    const button = document.getElementById("scanBtn");
+    const message = document.getElementById("message");
+    button.disabled = true;
+    message.textContent = "Running service scan…";
+    message.className = "muted";
+
+    try {
+      const response = await fetch(API + "/api/scan", { method: "POST" });
+      const result = await response.json();
+      if (!response.ok || result.status !== "completed") {
+        throw new Error(result.message || "Scan failed");
+      }
+      scanResults = result.open_ports || [];
+      renderPorts();
+      message.textContent = `Scan completed: ${result.target} is ${result.host_status}.`;
+      message.className = "status";
+      await refreshData();
+    } catch (error) {
+      message.textContent = "Scan failed: " + error.message;
+      message.className = "error";
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function simulate() {
+    const message = document.getElementById("message");
+    try {
+      const response = await fetch(API + "/api/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event_type: "Repeated failed login",
+          source: "192.168.50.20",
+          count: 8
+        })
+      });
+      if (!response.ok) throw new Error("Could not record event");
+      await refreshData();
+      message.textContent = "Simulated training event recorded in findings and audit trail.";
+      message.className = "status";
+    } catch (error) {
+      message.textContent = error.message;
+      message.className = "error";
+    }
+  }
+
+  refreshData();
+</script>
+</body>
+</html>
